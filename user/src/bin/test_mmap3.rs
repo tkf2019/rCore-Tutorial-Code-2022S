@@ -15,11 +15,11 @@ fn main() -> i32 {
     let start: usize = 0x10000000;
     let len: usize = 4096;
     let prot: usize = 3;
-    assert_eq!(len as isize, mmap(start, len, prot));
-    assert_eq!(mmap(start - len, len + 1, prot), -1);
-    assert_eq!(mmap(start + len + 1, len, prot), -1);
-    assert_eq!(mmap(start + len, len, 0), -1);
-    assert_eq!(mmap(start + len, len, prot | 8), -1);
+    assert_eq!(len as isize, mmap(start, len, prot, 0, -1));
+    assert_eq!(mmap(start - len, len + 1, prot, 0, -1), -1);
+    assert_eq!(mmap(start + len + 1, len, prot, 0, -1), -1);
+    assert_eq!(mmap(start + len, len, 0, 0, -1), -1);
+    assert_eq!(mmap(start + len, len, prot | 8, 0, -1), -1);
     println!("Test 04_4 test OK!");
     0
 }

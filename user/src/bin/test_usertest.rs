@@ -15,6 +15,8 @@ static TESTS: &[&str] = &[
     "test_unmap\0",
     "test_unmap2\0",
     "test_shmem0\0",
+    "test_shmem1\0",
+    "test_shmem2\0",
 ];
 
 use user_lib::{spawn, waitpid};

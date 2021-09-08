@@ -1,6 +1,7 @@
 use super::{PhysAddr, PhysPageNum};
 use crate::config::MEMORY_END;
 use crate::sync::UPSafeCell;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
@@ -97,11 +98,11 @@ pub fn init_frame_allocator() {
     );
 }
 
-pub fn frame_alloc() -> Option<FrameTracker> {
+pub fn frame_alloc() -> Option<Arc<FrameTracker>> {
     FRAME_ALLOCATOR
         .exclusive_access()
         .alloc()
-        .map(FrameTracker::new)
+        .map(|ppn| Arc::new(FrameTracker::new(ppn)))
 }
 
 fn frame_dealloc(ppn: PhysPageNum) {
@@ -110,7 +111,7 @@ fn frame_dealloc(ppn: PhysPageNum) {
 
 #[allow(unused)]
 pub fn frame_allocator_test() {
-    let mut v: Vec<FrameTracker> = Vec::new();
+    let mut v: Vec<Arc<FrameTracker>> = Vec::new();
     for i in 0..5 {
         let frame = frame_alloc().unwrap();
         info!("{:?}", frame);

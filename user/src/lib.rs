@@ -219,8 +219,8 @@ pub fn sleep(period_ms: usize) {
     }
 }
 
-pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
-    sys_mmap(start, len, prot)
+pub fn mmap(start: usize, len: usize, prot: usize, flag: usize, shmem_id: isize) -> isize {
+    sys_mmap(start, len, prot, flag, shmem_id)
 }
 
 pub fn munmap(start: usize, len: usize) -> isize {

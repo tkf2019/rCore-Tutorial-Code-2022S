@@ -157,8 +157,8 @@ pub fn sys_set_priority(prio: isize) -> isize {
     syscall(SYSCALL_SET_PRIORITY, [prio as usize, 0, 0])
 }
 
-pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
-    syscall(SYSCALL_MMAP, [start, len, prot])
+pub fn sys_mmap(start: usize, len: usize, prot: usize, flag: usize, shmem_id: isize) -> isize {
+    syscall6(SYSCALL_MMAP, [start, len, prot, flag, shmem_id as usize, 0])
 }
 
 pub fn sys_munmap(start: usize, len: usize) -> isize {

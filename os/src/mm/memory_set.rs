@@ -5,7 +5,7 @@ use super::{StepByOne, VPNRange};
 use crate::config::{MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use lazy_static::*;
 use riscv::register::satp;
@@ -26,6 +26,69 @@ extern "C" {
 lazy_static! {
     pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
+    pub static ref SHARED_MEMORY: Arc<UPSafeCell<SharedMemory>> =
+        Arc::new(unsafe { UPSafeCell::new(SharedMemory::new()) });
+}
+
+pub struct SharedMemory {
+    allocator: SharedMemoryAllocator,
+    frames: BTreeMap<isize, Vec<Weak<FrameTracker>>>,
+}
+
+impl SharedMemory {
+    pub fn new() -> Self {
+        Self {
+            allocator: SharedMemoryAllocator::new(),
+            frames: BTreeMap::new(),
+        }
+    }
+    pub fn alloc(&mut self) -> (isize, &mut Vec<Weak<FrameTracker>>) {
+        let id = self.allocator.alloc();
+        self.frames.insert(id, Vec::new());
+        (id, self.frames.get_mut(&id).unwrap())
+    }
+    pub fn dealloc(&mut self, id: isize) {
+        self.frames.remove(&id);
+        self.allocator.dealloc(id);
+    }
+    pub fn get(&self, id: isize) -> Option<&Vec<Weak<FrameTracker>>> {
+        self.frames.get(&id)
+    }
+    #[allow(unused)]
+    pub fn get_mut(&mut self, id: isize) -> Option<&mut Vec<Weak<FrameTracker>>> {
+        self.frames.get_mut(&id)
+    }
+    pub fn strong_count(&self, id: isize) -> usize {
+        self.frames.get(&id).unwrap()[0].strong_count()
+    }
+}
+
+pub struct SharedMemoryAllocator {
+    current: isize,
+    recycled: Vec<isize>,
+}
+
+impl SharedMemoryAllocator {
+    pub fn new() -> Self {
+        Self {
+            current: 0,
+            recycled: Vec::new(),
+        }
+    }
+    pub fn alloc(&mut self) -> isize {
+        match self.recycled.pop() {
+            Some(id) => id,
+            None => {
+                self.current += 1;
+                self.current - 1
+            }
+        }
+    }
+    pub fn dealloc(&mut self, id: isize) {
+        assert!(id <= self.current);
+        assert!(!self.recycled.iter().any(|i| *i == id));
+        self.recycled.push(id);
+    }
 }
 
 pub struct MemorySet {
@@ -53,7 +116,21 @@ impl MemorySet {
         self.push(
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
+            -1,
         );
+    }
+    pub fn insert_shared_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+        shmem_id: isize,
+    ) -> isize {
+        self.push(
+            MapArea::new(start_va, end_va, MapType::Shared, permission),
+            None,
+            shmem_id,
+        )
     }
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self
@@ -66,12 +143,14 @@ impl MemorySet {
             self.areas.remove(idx);
         }
     }
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
-        map_area.map(&mut self.page_table);
+    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>, shmem_id: isize) -> isize {
+        let shmem_id = map_area.map(&mut self.page_table, shmem_id);
+        map_area.shmem_id = shmem_id;
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
         }
         self.areas.push(map_area);
+        shmem_id
     }
     /// Mention that trampoline is not collected by areas.
     fn map_trampoline(&mut self) {
@@ -103,6 +182,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::X,
             ),
             None,
+            -1,
         );
         info!("mapping .rodata section");
         memory_set.push(
@@ -113,6 +193,7 @@ impl MemorySet {
                 MapPermission::R,
             ),
             None,
+            -1,
         );
         info!("mapping .data section");
         memory_set.push(
@@ -123,6 +204,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::W,
             ),
             None,
+            -1,
         );
         info!("mapping .bss section");
         memory_set.push(
@@ -133,6 +215,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::W,
             ),
             None,
+            -1,
         );
         info!("mapping physical memory");
         memory_set.push(
@@ -143,6 +226,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::W,
             ),
             None,
+            -1,
         );
         memory_set
     }
@@ -180,6 +264,7 @@ impl MemorySet {
                 memory_set.push(
                     map_area,
                     Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
+                    -1,
                 );
             }
         }
@@ -197,6 +282,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::W | MapPermission::U,
             ),
             None,
+            -1,
         );
         // map TrapContext
         memory_set.push(
@@ -207,6 +293,7 @@ impl MemorySet {
                 MapPermission::R | MapPermission::W,
             ),
             None,
+            -1,
         );
         (
             memory_set,
@@ -221,7 +308,7 @@ impl MemorySet {
         // copy data sections/trap_context/user_stack
         for area in user_space.areas.iter() {
             let new_area = MapArea::from_another(area);
-            memory_set.push(new_area, None);
+            memory_set.push(new_area, None, area.shmem_id);
             // copy data from another space
             for vpn in area.vpn_range {
                 let src_ppn = user_space.translate(vpn).unwrap().ppn();
@@ -251,9 +338,10 @@ impl MemorySet {
 
 pub struct MapArea {
     vpn_range: VPNRange,
-    data_frames: BTreeMap<VirtPageNum, FrameTracker>,
+    data_frames: BTreeMap<VirtPageNum, Arc<FrameTracker>>,
     map_type: MapType,
     map_perm: MapPermission,
+    shmem_id: isize,
 }
 
 impl MapArea {
@@ -270,6 +358,7 @@ impl MapArea {
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
+            shmem_id: -1,
         }
     }
     pub fn from_another(another: &MapArea) -> Self {
@@ -278,9 +367,15 @@ impl MapArea {
             data_frames: BTreeMap::new(),
             map_type: another.map_type,
             map_perm: another.map_perm,
+            shmem_id: another.shmem_id,
         }
     }
-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    pub fn map_one(
+        &mut self,
+        page_table: &mut PageTable,
+        vpn: VirtPageNum,
+        frame: Option<Arc<FrameTracker>>,
+    ) {
         let ppn: PhysPageNum;
         match self.map_type {
             MapType::Identical => {
@@ -288,6 +383,11 @@ impl MapArea {
             }
             MapType::Framed => {
                 let frame = frame_alloc().unwrap();
+                ppn = frame.ppn;
+                self.data_frames.insert(vpn, frame);
+            }
+            MapType::Shared => {
+                let frame = frame.unwrap();
                 ppn = frame.ppn;
                 self.data_frames.insert(vpn, frame);
             }
@@ -301,16 +401,51 @@ impl MapArea {
             MapType::Framed => {
                 self.data_frames.remove(&vpn);
             }
+            MapType::Shared => {
+                self.data_frames.remove(&vpn);
+            }
             _ => {}
         }
         page_table.unmap(vpn);
     }
-    pub fn map(&mut self, page_table: &mut PageTable) {
-        for vpn in self.vpn_range {
-            self.map_one(page_table, vpn);
+    pub fn map(&mut self, page_table: &mut PageTable, shared_memory_id: isize) -> isize {
+        match self.map_type {
+            MapType::Shared => {
+                let mut shared_memory = SHARED_MEMORY.exclusive_access();
+                let frames = shared_memory.get(shared_memory_id);
+                match frames {
+                    Some(frames) => {
+                        for (vpn, frame) in self.vpn_range.into_iter().zip(frames) {
+                            self.map_one(page_table, vpn, Some(frame.upgrade().unwrap()));
+                        }
+                        shared_memory_id
+                    }
+                    None => {
+                        let (id, frames) = shared_memory.alloc();
+                        for vpn in self.vpn_range {
+                            let frame = frame_alloc();
+                            self.map_one(page_table, vpn, frame.clone());
+                            frames.push(Arc::downgrade(&frame.unwrap()));
+                        }
+                        id
+                    }
+                }
+            }
+            _ => {
+                for vpn in self.vpn_range {
+                    self.map_one(page_table, vpn, None)
+                }
+                0
+            }
         }
     }
     pub fn unmap(&mut self, page_table: &mut PageTable) {
+        if self.map_type == MapType::Shared {
+            let mut shared_memory = SHARED_MEMORY.exclusive_access();
+            if shared_memory.strong_count(self.shmem_id) == 1 {
+                shared_memory.dealloc(self.shmem_id);
+            }
+        }
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
@@ -343,6 +478,7 @@ impl MapArea {
 pub enum MapType {
     Identical,
     Framed,
+    Shared,
 }
 
 bitflags! {

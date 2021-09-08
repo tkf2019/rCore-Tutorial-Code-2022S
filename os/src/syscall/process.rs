@@ -109,7 +109,7 @@ pub fn sys_set_priority(_prio: isize) -> isize {
 }
 
 // YOUR JOB: 扩展内核以实现 sys_mmap 和 sys_munmap
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+pub fn sys_mmap(_start: usize, _len: usize, _port: usize, _flag: usize, _shmem_id: usize) -> isize {
     -1
 }
 

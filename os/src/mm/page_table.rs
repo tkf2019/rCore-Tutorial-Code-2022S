@@ -1,5 +1,6 @@
 use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -54,7 +55,7 @@ impl PageTableEntry {
 
 pub struct PageTable {
     root_ppn: PhysPageNum,
-    frames: Vec<FrameTracker>,
+    frames: Vec<Arc<FrameTracker>>,
 }
 
 /// Assume that it won't oom when creating/mapping.

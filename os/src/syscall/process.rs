@@ -116,3 +116,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize, _flag: usize, _shmem_i
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     -1
 }
+
+// YOUR JOB: 移植 spawn
+
+// YOUR JOB: 邮件读写

@@ -2,18 +2,25 @@ name: Mirror and run GitLab CI
 
 on: [push]
 
+env: 
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build:
+  build-doc:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
-    - name: Mirror + trigger CI
-      uses: Gallium70/gitlab-mirror-and-ci-action@master
+    - uses: actions/checkout@v2
+    - name: Build doc
+      run: | 
+        cd os
+        rustup target add riscv64gc-unknown-none-elf
+        cargo install cargo-binutils --vers ~0.2
+        rustup component add rust-src
+        rustup component add llvm-tools-preview
+        cargo doc --no-deps --verbose
+        echo '<meta http-equiv=refresh content=0;url=rcore-tutorial/index.html>' > target/riscv64gc-unknown-none-elf/doc/index.html
+    - name: Push to gh-pages
+      uses: peaceiris/actions-gh-pages@v3
       with:
-        args: "https://git.tsinghua.edu.cn/os-lab/public/rcore-tutorial-code-2022s"
-      env:
-        GITLAB_HOSTNAME: "git.tsinghua.edu.cn"
-        GITLAB_PROJECT_ID: "12002"
-        GITLAB_PROJECT_NAME: "rcore-tutorial-code-2022s"
-        GITLAB_PROJECT_TOKEN: ${{secrets.GITLAB_PROJECT_TOKEN}}
-        GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc

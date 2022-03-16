@@ -17,9 +17,9 @@ jobs:
         cd os
         make
         cargo doc --no-deps --verbose
-        echo '<meta http-equiv=refresh content=0;url=index.html>' > target/riscv64gc-unknown-none-elf/doc/index.html
+        echo '<meta http-equiv=refresh content=0;url=index.html>' > target/riscv64gc-unknown-none-elf/doc/os/index.html
     - name: Push to gh-pages
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc
+        publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc/os
